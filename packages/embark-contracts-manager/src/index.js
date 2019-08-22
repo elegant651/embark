@@ -19,6 +19,24 @@ class ContractsManager {
     this.deployOnlyOnConfig = false;
     this.compileError = false;
     this.compileOnceOnly = options.compileOnceOnly;
+    this.contractsSubscriptions = [];
+    this._web3 = null;
+    this.logFile = dappPath(".embark", "contractEvents.json");
+
+    this.writeLogFile = async.cargo((tasks, callback) => {
+      const data = this._readEvents();
+
+      tasks.forEach(task => {
+        data[new Date().getTime()] = task;
+      });
+
+      this.fs.writeJson(this.logFile, data, err => {
+        if (err) {
+          console.error(err);
+        }
+        callback();
+      });
+    });
 
     this.events.setCommandHandler("contracts:build", this.buildContracts.bind(this));
 
@@ -34,6 +52,8 @@ class ContractsManager {
       cb(null, this.getContract(contractName));
     });
 
+    this.events.on('blockchain:contracts:event', this._saveEvent.bind(this));
+
     this.events.setCommandHandler('contracts:add', (contract, cb = () => {}) => {
       this.contracts[contract.className] = new Contract(this.logger, contract);
       cb(null, this.contracts[contract.className]);
@@ -42,6 +62,8 @@ class ContractsManager {
     console.dir("---- contracts manager---- ");
     // this.registerCommands()
     this.registerAPIs();
+
+    embark.registerActionForEvent("contracts:deploy:afterAll", this.subscribeToContractEvents.bind(this));
   }
 
   registerCommands() {
@@ -246,6 +268,73 @@ class ContractsManager {
         }, false, false);
       }
     );
+
+    embark.registerAPICall(
+      'ws',
+      '/embark-api/blockchain/contracts/event',
+      (ws) => {
+        this.events.on('blockchain:contracts:event', (data) => {
+          ws.send(JSON.stringify(data), () => {});
+        });
+      }
+    );
+
+    embark.registerAPICall(
+      'get',
+      '/embark-api/blockchain/contracts/events',
+      (_req, res) => {
+        res.send(JSON.stringify(this._getEvents()));
+      }
+    );
+  }
+
+  // TODO should this be moved to another package? This comes from the now deserted blockchain-connector
+  async subscribeToContractEvents(callback) {
+    const web3 = await this.web3;
+
+    this.contractsSubscriptions.forEach((eventEmitter) => {
+      const reqMgr = eventEmitter.options.requestManager;
+      // attempting an eth_unsubscribe when not connected throws an
+      // "connection not open on send()" error
+      if(reqMgr && reqMgr.provider && reqMgr.provider.connected) {
+        eventEmitter.unsubscribe();
+      }
+    });
+
+    this.contractsSubscriptions = [];
+    this.listContracts().forEach(contractObject => {
+      if (!contractObject.deployedAddress) {
+        return;
+      }
+
+      const contract = new web3.eth.Contract(contractObject.abiDefinition, contractObject.deployedAddress);
+      const eventEmitter = contract.events.allEvents();
+      this.contractsSubscriptions.push(eventEmitter);
+      eventEmitter.on('data', (data) => {
+        Object.assign(data, {name: contractObject.className});
+        // TODO probably need to rename the event
+        this.events.emit('blockchain:contracts:event', data);
+      });
+    });
+    callback();
+  }
+
+  _getEvents() {
+    const data = this._readEvents();
+    return Object.values(data).reverse();
+  }
+
+  _saveEvent(event) {
+    this.writeLogFile.push(event);
+  }
+
+  _readEvents() {
+    try {
+      this.fs.ensureFileSync(this.logFile);
+      return JSON.parse(this.fs.readFileSync(this.logFile));
+    } catch(_error) {
+      return {};
+    }
   }
 
   formatContracts() {

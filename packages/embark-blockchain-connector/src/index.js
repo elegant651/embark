@@ -455,24 +455,6 @@ class BlockchainConnector {
     );
 
     plugin.registerAPICall(
-      'ws',
-      '/embark-api/blockchain/contracts/event',
-      (ws) => {
-        this.events.on('blockchain:contracts:event', (data) => {
-          ws.send(JSON.stringify(data), () => {});
-        });
-      }
-    );
-
-    plugin.registerAPICall(
-      'get',
-      '/embark-api/blockchain/contracts/events',
-      (_req, res) => {
-        res.send(JSON.stringify(this._getEvents()));
-      }
-    );
-
-    plugin.registerAPICall(
       'post',
       '/embark-api/messages/sign',
       (req, res) => {
