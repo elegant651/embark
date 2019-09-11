@@ -1,7 +1,6 @@
 import async from 'async';
-const {__} = require('embark-i18n');
+const { __ } = require('embark-i18n');
 const constants = require('embark-core/constants');
-const Web3RequestManager = require('web3-core-requestmanager');
 
 import BlockchainAPI from "./api";
 class Blockchain {
@@ -18,11 +17,11 @@ class Blockchain {
     embark.registerActionForEvent("pipeline:generateAll:before", this.addArtifactFile.bind(this));
 
     this.blockchainNodes = {};
-    this.events.setCommandHandler("blockchain:node:register", (clientName, startCb) => {
-      this.blockchainNodes[clientName] = startCb;
+    this.events.setCommandHandler("blockchain:node:register", (clientName, { isStartedFn, launchFn, stopFn }) => {
+      this.blockchainNodes[clientName] = { isStartedFn, launchFn, stopFn };
     });
 
-    this.events.setCommandHandler("blockchain:node:start", async (blockchainConfig, cb) => {
+    this.events.setCommandHandler("blockchain:node:start", (blockchainConfig, cb) => {
       const self = this;
       const clientName = blockchainConfig.client;
       function started() {
@@ -33,36 +32,29 @@ class Blockchain {
         started();
         return cb();
       }
-      const requestManager = new Web3RequestManager.Manager(blockchainConfig.endpoint);
 
-      const ogConsoleError = console.error;
-      // TODO remove this once we update to web3 2.0
-      // TODO in web3 1.0, it console.errors "connection not open on send()" even if we catch the error
-      console.error = (...args) => {
-        if (args[0].indexOf('connection not open on send()') > -1) {
-          return;
+      const client = this.blockchainNodes[clientName];
+
+      if (!client) return cb(`Blockchain client '${clientName}' not found, please register this node using 'blockchain:node:register'.`);
+      if (!client.isStartedFn) return cb(`Blockchain client '${clientName}' has no 'isStarted' function registered, please register one using 'blockchain:node:register'.`);
+      if (!client.launchFn) return cb(`Blockchain client '${clientName}' has no launch function registered, please register one using 'blockchain:node:register'.`);
+      if (!client.stopFn) return cb(`Blockchain client '${clientName}' has no stop function registered, please register one using 'blockchain:node:register'.`);
+
+      // check if we should should start
+      client.isStartedFn.call(client, (err, isStarted) => {
+        if (err) {
+          return cb(err);
         }
-        ogConsoleError(...args);
-      };
-      requestManager.send({method: 'eth_accounts'}, (err, _accounts) => {
-        console.error = ogConsoleError;
-        if (!err) {
-          // Node is already started
+        if (isStarted) {
+          // Node may already be started
           started();
           return cb(null, true);
         }
-        const clientFunctions = this.blockchainNodes[clientName];
-        if (!clientFunctions) {
-          return cb(__("Client %s not found", clientName));
-        }
-
-        let onStart = () => {
+        // start node
+        client.launchFn.call(client, () => {
           started();
           cb();
-        };
-
-        this.startedClient = clientName;
-        clientFunctions.launchFn.apply(clientFunctions, [onStart]);
+        });
       });
     });
 
