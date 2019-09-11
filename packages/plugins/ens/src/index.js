@@ -1,10 +1,12 @@
 import {__} from 'embark-i18n';
-import {AddressUtils, dappPath, hashTo32ByteHexString, recursiveMerge} from 'embark-utils';
+import {AddressUtils, hashTo32ByteHexString, recursiveMerge} from 'embark-utils';
 const namehash = require('eth-ens-namehash');
 const async = require('async');
-import {dappArtifacts, ens} from 'embark-core/constants.json';
-import EmbarkJS, {Utils as embarkJsUtils} from 'embarkjs';
+import {ens} from 'embark-core/constants.json';
+import {Utils as embarkJsUtils} from 'embarkjs';
 import ensJS from 'embarkjs-ens';
+import ensContractAddresses from './ensContractAddresses';
+import EnsAPI from './api';
 const ENSFunctions = ensJS.ENSFunctions;
 const Web3 = require('web3');
 
@@ -16,50 +18,8 @@ const {ZERO_ADDRESS} = AddressUtils;
 const ENS_WHITELIST = ens.whitelist;
 const NOT_REGISTERED_ERROR = 'Name not yet registered';
 
-const MAINNET_ID = '1';
-const ROPSTEN_ID = '3';
-const RINKEBY_ID = '4';
 // Price of ENS registration contract functions
 const ENS_GAS_PRICE = 700000;
-
-const ENS_CONTRACTS_CONFIG = {
-  [MAINNET_ID]: {
-    "ENSRegistry": {
-      "address": "0x314159265dd8dbb310642f98f50c066173c1259b",
-      "silent": true
-    },
-    "Resolver": {
-      "deploy": false
-    },
-    "FIFSRegistrar": {
-      "deploy": false
-    }
-  },
-  [ROPSTEN_ID]: {
-    "ENSRegistry": {
-      "address": "0x112234455c3a32fd11230c42e7bccd4a84e02010",
-      "silent": true
-    },
-    "Resolver": {
-      "deploy": false
-    },
-    "FIFSRegistrar": {
-      "deploy": false
-    }
-  },
-  [RINKEBY_ID]: {
-    "ENSRegistry": {
-      "address": "0xe7410170f87102DF0055eB195163A03B7F2Bff4A",
-      "silent": true
-    },
-    "Resolver": {
-      "deploy": false
-    },
-    "FIFSRegistrar": {
-      "deploy": false
-    }
-  }
-};
 
 class ENS {
   constructor(embark, _options) {
@@ -72,19 +32,13 @@ class ENS {
     this.embark = embark;
     this.ensConfig = ensConfig;
     this.configured = false;
-    this.modulesPath = dappPath(embark.config.embarkConfig.generationDir, dappArtifacts.symlinkDir);
     this.initated = false;
 
+    this.ensAPI = new EnsAPI(embark, {ens: this});
+
     this.events.request("namesystem:node:register", "ens", (readyCb) => {
-      readyCb();
+      this.init(readyCb);
     });
-
-    this.events.setCommandHandler("ens:resolve", this.ensResolve.bind(this));
-    this.events.setCommandHandler("ens:isENSName", (name, cb) => {
-      setImmediate(cb, this.isENSName(name));
-    });
-
-    this.init(() => {});
   }
 
   get web3() {
@@ -119,7 +73,7 @@ class ENS {
     this.doSetENSProvider = this.config.namesystemConfig.provider === 'ens';
 
     this.registerEvents();
-    this.registerConsoleCommands();
+    this.ensAPI.registerConsoleCommands();
     this.events.request2("runcode:whitelist", 'eth-ens-namehash');
     this.initated = true;
     cb();
@@ -127,48 +81,6 @@ class ENS {
 
   reset() {
     this.configured = false;
-  }
-
-  registerConsoleCommands() {
-    this.embark.registerConsoleCommand({
-      usage: 'resolve [name]',
-      description: __('Resolves an ENS name'),
-      matches: (cmd) => {
-        let [cmdName] = cmd.split(' ');
-        return cmdName === 'resolve';
-      },
-      process: (cmd, cb) => {
-        let [_cmdName, domain] = cmd.split(' ');
-        EmbarkJS.Names.resolve(domain, cb);
-      }
-    });
-
-    this.embark.registerConsoleCommand({
-      usage: 'lookup [address]',
-      description: __('Lookup an ENS address'),
-      matches: (cmd) => {
-        let [cmdName] = cmd.split(' ');
-        return cmdName === 'lookup';
-      },
-      process: (cmd, cb) => {
-        let [_cmdName, address] = cmd.split(' ');
-        EmbarkJS.Names.lookup(address, cb);
-      }
-    });
-
-
-    this.embark.registerConsoleCommand({
-      usage: 'registerSubDomain [subDomain] [address]',
-      description: __('Register an ENS sub-domain'),
-      matches: (cmd) => {
-        let [cmdName] = cmd.split(' ');
-        return cmdName === 'registerSubDomain';
-      },
-      process: (cmd, cb) => {
-        let [_cmdName, name, address] = cmd.split(' ');
-        EmbarkJS.Names.registerSubDomain(name, address, cb);
-      }
-    });
   }
 
   registerEvents() {
@@ -181,6 +93,10 @@ class ENS {
     this.events.on('blockchain:reseted', this.reset.bind(this));
     this.events.setCommandHandler("storage:ens:associate", this.associateStorageToEns.bind(this));
     this.events.setCommandHandler("ens:config", this.getEnsConfig.bind(this));
+    this.events.setCommandHandler("ens:resolve", this.ensResolve.bind(this));
+    this.events.setCommandHandler("ens:isENSName", (name, cb) => {
+      setImmediate(cb, this.isENSName(name));
+    });
   }
 
   getEnsConfig(cb) {
@@ -205,7 +121,7 @@ class ENS {
       const web3 = await this.web3;
 
       const networkId = await web3.eth.net.getId();
-      const isKnownNetwork = Boolean(ENS_CONTRACTS_CONFIG[networkId]);
+      const isKnownNetwork = Boolean(ensContractAddresses[networkId]);
       const shouldRegisterSubdomain = this.config.namesystemConfig.register && this.config.namesystemConfig.register.subdomains && Object.keys(this.config.namesystemConfig.register.subdomains).length;
       if (isKnownNetwork || !shouldRegisterSubdomain) {
         return cb();
@@ -342,7 +258,7 @@ class ENS {
       }
 
       const reverseNode = namehash.hash(address.toLowerCase().substr(2) + reverseAddrSuffix);
-      this.registerSubDomain(defaultAccount, subDomainName, reverseNode, address, secureSend, callback);
+      this.registerSubDomain(defaultAccount, subDomainName, reverseNode, address.toLowerCase(), secureSend, callback);
     });
   }
 
@@ -361,64 +277,6 @@ class ENS {
     });
   }
 
-  registerAPI() {
-    let self = this;
-
-    const createInternalResolverContract = function (resolverAddress, callback) {
-      self.createResolverContract({resolverAbi: self.ensConfig.Resolver.abiDefinition, resolverAddress}, callback);
-    };
-
-    self.embark.registerAPICall(
-      'get',
-      '/embark-api/ens/resolve',
-      (req, res) => {
-        async.waterfall([
-          function (callback) {
-            ENSFunctions.resolveName(req.query.name, self.ensContract, createInternalResolverContract.bind(self), callback, namehash);
-          }
-        ], function (error, address) {
-          if (error) {
-            return res.send({error: error.message || error});
-          }
-          res.send({address});
-        });
-      }
-    );
-
-    self.embark.registerAPICall(
-      'get',
-      '/embark-api/ens/lookup',
-      (req, res) => {
-        async.waterfall([
-          function (callback) {
-            ENSFunctions.lookupAddress(req.query.address, self.ensContract, namehash, createInternalResolverContract.bind(self), callback);
-          }
-        ], function (error, name) {
-          if (error) {
-            return res.send({error: error.message || error});
-          }
-          res.send({name});
-        });
-      }
-    );
-
-    self.embark.registerAPICall(
-      'post',
-      '/embark-api/ens/register',
-      (req, res) => {
-        self.events.request("blockchain:defaultAccount:get", (defaultAccount) => {
-          const {subdomain, address} = req.body;
-          this.safeRegisterSubDomain(subdomain, address, defaultAccount, (error) => {
-            if (error) {
-              return res.send({error: error.message || error});
-            }
-            res.send({name: `${req.body.subdomain}.${self.config.namesystemConfig.register.rootDomain}`, address: req.body.address});
-          });
-        });
-      }
-    );
-  }
-
   async configureContractsAndRegister(_options, cb) {
     const NO_REGISTRATION = 'NO_REGISTRATION';
     const self = this;
@@ -430,8 +288,8 @@ class ENS {
 
     const networkId = await web3.eth.net.getId();
 
-    if (ENS_CONTRACTS_CONFIG[networkId]) {
-      this.ensConfig = recursiveMerge(this.ensConfig, ENS_CONTRACTS_CONFIG[networkId]);
+    if (ensContractAddresses[networkId]) {
+      this.ensConfig = recursiveMerge(this.ensConfig, ensContractAddresses[networkId]);
     }
 
     this.ensConfig.ENSRegistry = await this.events.request2('contracts:add', this.ensConfig.ENSRegistry);
@@ -536,7 +394,7 @@ class ENS {
         self.logger.error(err.message || err);
         return cb(err);
       }
-      self.registerAPI();
+      self.ensAPI.registerAPIs();
       self.setProviderAndRegisterDomains(cb);
     });
   }
