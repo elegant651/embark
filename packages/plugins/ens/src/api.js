@@ -39,7 +39,7 @@ class ensAPI {
       'post',
       '/embark-api/ens/register',
       (req, res) => {
-        this.embark.events.request("blockchain:defaultAccount:get", (defaultAccount) => {
+        this.embark.events.request("blockchain:defaultAccount:get", (_err, defaultAccount) => {
           const {subdomain, address} = req.body;
           this.ens.safeRegisterSubDomain(subdomain, address, defaultAccount, (error) => {
             if (error) {
@@ -83,8 +83,7 @@ class ensAPI {
       matches: (cmd) => cmd.split(' ')[0] === 'registerSubDomain',
       process: (cmd, cb) => {
         const [_cmdName, name, address] = cmd.split(' ');
-        console.log('Register:', name, address);
-        this.embark.events.request("blockchain:defaultAccount:get", (defaultAccount) => {
+        this.embark.events.request("blockchain:defaultAccount:get", (_err, defaultAccount) => {
           this.ens.safeRegisterSubDomain(name, address, defaultAccount, cb);
         });
       }

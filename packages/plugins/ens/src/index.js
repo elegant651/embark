@@ -90,6 +90,7 @@ class ENS {
     this.eventsRegistered = true;
     this.embark.registerActionForEvent("deployment:deployContracts:beforeAll", this.configureContractsAndRegister.bind(this));
     this.embark.registerActionForEvent('deployment:contract:beforeDeploy', this.modifyENSArguments.bind(this));
+    this.embark.registerActionForEvent("deployment:deployContracts:afterAll", this.associateContractAddresses.bind(this));
     this.events.on('blockchain:reseted', this.reset.bind(this));
     this.events.setCommandHandler("storage:ens:associate", this.associateStorageToEns.bind(this));
     this.events.setCommandHandler("ens:config", this.getEnsConfig.bind(this));
@@ -191,7 +192,7 @@ class ENS {
           });
       },
       function getDefaultAccount(resolver, next) {
-        self.events.request("blockchain:defaultAccount:get", (defaultAccount) => {
+        self.events.request("blockchain:defaultAccount:get", (_err, defaultAccount) => {
           next(null, resolver, defaultAccount);
         });
       },
@@ -213,21 +214,29 @@ class ENS {
       const directivesRegExp = new RegExp(/\$(\w+\[?\d?\]?)/g);
 
       const directives = directivesRegExp.exec(address);
-      if (!directives || !directives.length) {
-        return this.safeRegisterSubDomain(subDomainName, address, defaultAccount, eachCb);
+      if (directives && directives.length) {
+        return eachCb();
       }
+      this.safeRegisterSubDomain(subDomainName, address, defaultAccount, eachCb);
+    }, cb);
+  }
 
-      // Register as an afterAll to get the contract the directive is pointing to
-      this.embark.registerActionForEvent("contracts:deploy:afterAll", async (deployActionCb) => {
-        if (!this.config.namesystemConfig.enabled) {
-          // ENS was disabled
-          return deployActionCb();
-        }
+  async associateContractAddresses(params, cb) {
+    if (!this.config.namesystemConfig.enabled) {
+      // ENS was disabled
+      return cb();
+    }
 
-        const currentDefaultAccount = await this.events.request2("blockchain:defaultAccount:get");
-        if (defaultAccount !== currentDefaultAccount) {
-          this.logger.trace(`Skipping registration of subdomain "${directives[1]}" as this action was registered for a previous configuration`);
-          return deployActionCb();
+    const defaultAccount = await this.web3DefaultAccount;
+
+    await Promise.all(Object.keys(this.config.namesystemConfig.register.subdomains).map((subDomainName) => {
+      return new Promise(async (resolve, _reject) => {
+        const address = this.config.namesystemConfig.register.subdomains[subDomainName];
+        const directivesRegExp = new RegExp(/\$(\w+\[?\d?\]?)/g);
+
+        const directives = directivesRegExp.exec(address);
+        if (!directives || !directives.length) {
+          return resolve();
         }
 
         const contract = await this.events.request2("contracts:contract", directives[1]);
@@ -238,12 +247,18 @@ class ENS {
             contractName: directives[1],
             subdomain: subDomainName
           }));
-          return deployActionCb();
+          return resolve();
         }
-        this.safeRegisterSubDomain(subDomainName, contract.deployedAddress, defaultAccount, deployActionCb);
+        this.safeRegisterSubDomain(subDomainName, contract.deployedAddress, defaultAccount, (err) => {
+          if (err) {
+            this.logger.error(err);
+          }
+          resolve();
+        });
       });
-      return eachCb();
-    }, cb);
+    }));
+
+    cb();
   }
 
   safeRegisterSubDomain(subDomainName, address, defaultAccount, callback) {
