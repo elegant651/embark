@@ -10,19 +10,12 @@ class ensAPI {
     this.ens = options.ens;
   }
 
-  createInternalResolverContract(resolverAddress, callback) {
-    this.ens.createResolverContract({
-      resolverAbi: this.ens.ensConfig.Resolver.abiDefinition,
-      resolverAddress
-    }, callback);
-  }
-
   registerAPIs() {
     this.embark.registerAPICall(
       'get',
       '/embark-api/ens/resolve',
       (req, res) => {
-        ENSFunctions.resolveName(req.query.name, this.ens.ensContract, this.createInternalResolverContract.bind(this), (error, address) => {
+        ENSFunctions.resolveName(req.query.name, this.ens.ensContract, this.ens.createResolverContract.bind(this.ens), (error, address) => {
           if (error) {
             return res.send({error: error.message || error});
           }
@@ -34,7 +27,7 @@ class ensAPI {
       'get',
       '/embark-api/ens/lookup',
       (req, res) => {
-        ENSFunctions.lookupAddress(req.query.address, this.ens.ensContract, namehash, this.createInternalResolverContract.bind(this), (error, name) => {
+        ENSFunctions.lookupAddress(req.query.address, this.ens.ensContract, namehash, this.ens.createResolverContract.bind(this.ens), (error, name) => {
           if (error) {
             return res.send({error: error.message || error});
           }
@@ -69,7 +62,7 @@ class ensAPI {
       matches: (cmd) => cmd.split(' ')[0] === 'resolve',
       process: (cmd, cb) => {
         const [_cmdName, name] = cmd.split(' ');
-        ENSFunctions.resolveName(name, this.ens.ensContract, this.createInternalResolverContract.bind(this), cb, namehash);
+        ENSFunctions.resolveName(name, this.ens.ensContract, this.ens.createResolverContract.bind(this.ens), cb, namehash);
       }
     });
 
@@ -79,7 +72,7 @@ class ensAPI {
       matches: (cmd) => cmd.split(' ')[0] === 'lookup',
       process: (cmd, cb) => {
         const [_cmdName, address] = cmd.split(' ');
-        ENSFunctions.lookupAddress(address, this.ens.ensContract, namehash, this.createInternalResolverContract.bind(this), cb);
+        ENSFunctions.lookupAddress(address, this.ens.ensContract, namehash, this.ens.createResolverContract.bind(this.ens), cb);
       }
     });
 

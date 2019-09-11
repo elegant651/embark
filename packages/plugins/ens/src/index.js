@@ -268,10 +268,10 @@ class ENS {
       subDomainName, this.config.namesystemConfig.register.rootDomain, reverseNode, address, this.logger, secureSend, cb, namehash);
   }
 
-  createResolverContract(config, callback) {
+  createResolverContract(resolverAddress, callback) {
     this.events.request("blockchain:contract:create", {
-      abi: config.resolverAbi,
-      address: config.resolverAddress
+      abi: this.ensConfig.Resolver.abiDefinition,
+      address: resolverAddress
     }, (resolver) => {
       callback(null, resolver);
     });
@@ -429,36 +429,8 @@ class ENS {
     });
   }
 
-  async ensResolve(name, cb) {
-    const self = this;
-    if (!self.enabled) {
-      return cb('ENS not enabled');
-    }
-    if (!self.configured) {
-      return cb('ENS not configured');
-    }
-    const hashedName = namehash.hash(name);
-    const web3 = await this.web3;
-    async.waterfall([
-      function getResolverAddress(next) {
-        self.ensContract.methods.resolver(hashedName).call((err, resolverAddress) => {
-          if (err) {
-            return next(err);
-          }
-          if (resolverAddress === ZERO_ADDRESS) {
-            return next(NOT_REGISTERED_ERROR);
-          }
-          next(null, resolverAddress);
-        });
-      },
-      function createResolverContract(resolverAddress, next) {
-        const resolverContract = new web3.eth.Contract(self.ensConfig.Resolver.abiDefinition, resolverAddress);
-        next(null, resolverContract);
-      },
-      function resolveName(resolverContract, next) {
-        resolverContract.methods.addr(hashedName).call(next);
-      }
-    ], cb);
+  ensResolve(name, cb) {
+    ENSFunctions.resolveName(name, this.ensContract, this.createResolverContract.bind(this), cb, namehash);
   }
 
   isENSName(name) {
