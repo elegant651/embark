@@ -87,12 +87,11 @@ class ENS {
     this.embark.registerActionForEvent("deployment:deployContracts:beforeAll", this.configureContractsAndRegister.bind(this));
     this.embark.registerActionForEvent('deployment:contract:beforeDeploy', this.modifyENSArguments.bind(this));
     this.embark.registerActionForEvent("deployment:deployContracts:afterAll", this.associateContractAddresses.bind(this));
-    this.events.setCommandHandler("storage:ens:associate", this.associateStorageToEns.bind(this));
-    this.events.setCommandHandler("ens:config", this.getEnsConfig.bind(this));
+    this.embark.registerActionForEvent("pipeline:generateAll:before", this.addArtifactFile.bind(this));
   }
 
-  getEnsConfig(cb) {
-    cb({
+  getEnsConfig() {
+    return {
       env: this.env,
       registration: this.config.namesystemConfig.register,
       registryAbi: this.ensConfig.ENSRegistry.abiDefinition,
@@ -101,7 +100,7 @@ class ENS {
       registrarAddress: this.ensConfig.FIFSRegistrar.deployedAddress,
       resolverAbi: this.ensConfig.Resolver.abiDefinition,
       resolverAddress: this.ensConfig.Resolver.deployedAddress
-    });
+    };
   }
 
   executeCommand(command, args, cb) {
@@ -113,23 +112,31 @@ class ENS {
     }
   }
 
-  setProviderAndRegisterDomains(cb = (() => {})) {
-    this.getEnsConfig(async (config) => {
-      if (this.doSetENSProvider) {
-        this.setupEmbarkJS(config);
-      }
+  addArtifactFile(_params, cb) {
+    const config = this.getEnsConfig();
+    this.events.request("pipeline:register", {
+      path: [this.config.embarkConfig.generationDir, 'config'],
+      file: 'namesystem.json',
+      format: 'json',
+      content: Object.assign({}, this.embark.config.namesystemConfig, config)
+    }, cb);
+  }
 
-      const web3 = await this.web3;
+  async setProviderAndRegisterDomains(cb = (() => {})) {
+    const config = this.getEnsConfig();
+    if (this.doSetENSProvider) {
+      this.setupEmbarkJS(config);
+    }
 
-      const networkId = await web3.eth.net.getId();
-      const isKnownNetwork = Boolean(ensContractAddresses[networkId]);
-      const shouldRegisterSubdomain = this.config.namesystemConfig.register && this.config.namesystemConfig.register.subdomains && Object.keys(this.config.namesystemConfig.register.subdomains).length;
-      if (isKnownNetwork || !shouldRegisterSubdomain) {
-        return cb();
-      }
+    const web3 = await this.web3;
+    const networkId = await web3.eth.net.getId();
+    const isKnownNetwork = Boolean(ensContractAddresses[networkId]);
+    const shouldRegisterSubdomain = this.config.namesystemConfig.register && this.config.namesystemConfig.register.subdomains && Object.keys(this.config.namesystemConfig.register.subdomains).length;
+    if (isKnownNetwork || !shouldRegisterSubdomain) {
+      return cb();
+    }
 
-      this.registerConfigDomains(config, cb);
-    });
+    this.registerConfigDomains(config, cb);
   }
 
   async setupEmbarkJS(config) {
