@@ -38,7 +38,7 @@ class ENS {
 
     this.events.request("namesystem:node:register", "ens", (readyCb) => {
       this.init(readyCb);
-    });
+    }, this.executeCommand.bind(this));
   }
 
   get web3() {
@@ -79,10 +79,6 @@ class ENS {
     cb();
   }
 
-  reset() {
-    this.configured = false;
-  }
-
   registerEvents() {
     if (this.eventsRegistered) {
       return;
@@ -91,13 +87,8 @@ class ENS {
     this.embark.registerActionForEvent("deployment:deployContracts:beforeAll", this.configureContractsAndRegister.bind(this));
     this.embark.registerActionForEvent('deployment:contract:beforeDeploy', this.modifyENSArguments.bind(this));
     this.embark.registerActionForEvent("deployment:deployContracts:afterAll", this.associateContractAddresses.bind(this));
-    this.events.on('blockchain:reseted', this.reset.bind(this));
     this.events.setCommandHandler("storage:ens:associate", this.associateStorageToEns.bind(this));
     this.events.setCommandHandler("ens:config", this.getEnsConfig.bind(this));
-    this.events.setCommandHandler("ens:resolve", this.ensResolve.bind(this));
-    this.events.setCommandHandler("ens:isENSName", (name, cb) => {
-      setImmediate(cb, this.isENSName(name));
-    });
   }
 
   getEnsConfig(cb) {
@@ -111,6 +102,15 @@ class ENS {
       resolverAbi: this.ensConfig.Resolver.abiDefinition,
       resolverAddress: this.ensConfig.Resolver.deployedAddress
     });
+  }
+
+  executeCommand(command, args, cb) {
+    switch (command) {
+      case 'resolve': this.ensResolve(args[0], cb); break;
+      case 'lookup': this.ensLookup(args[0], cb); break;
+      case 'registerSubdomain': this.ensRegisterSubdomain(args[0], args[1], cb); break;
+      default: cb(__('Unknown command %s', command));
+    }
   }
 
   setProviderAndRegisterDomains(cb = (() => {})) {
@@ -446,6 +446,16 @@ class ENS {
 
   ensResolve(name, cb) {
     ENSFunctions.resolveName(name, this.ensContract, this.createResolverContract.bind(this), cb, namehash);
+  }
+
+  ensLookup(address, cb) {
+    ENSFunctions.lookupAddress(address, this.ensContract, namehash, this.createResolverContract.bind(this), cb);
+  }
+
+  ensRegisterSubdomain(subdomain, address, cb) {
+    this.events.request("blockchain:defaultAccount:get", (_err, defaultAccount) => {
+      this.safeRegisterSubDomain(subdomain, address, defaultAccount, cb);
+    });
   }
 
   isENSName(name) {

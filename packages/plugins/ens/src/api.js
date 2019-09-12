@@ -39,16 +39,14 @@ class ensAPI {
       'post',
       '/embark-api/ens/register',
       (req, res) => {
-        this.embark.events.request("blockchain:defaultAccount:get", (_err, defaultAccount) => {
-          const {subdomain, address} = req.body;
-          this.ens.safeRegisterSubDomain(subdomain, address, defaultAccount, (error) => {
-            if (error) {
-              return res.send({error: error.message || error});
-            }
-            res.send({
-              name: `${req.body.subdomain}.${this.embark.config.namesystemConfig.register.rootDomain}`,
-              address: req.body.address
-            });
+        const {subdomain, address} = req.body;
+        this.ens.ensRegisterSubdomain(subdomain, address, (error) => {
+          if (error) {
+            return res.send({error: error.message || error});
+          }
+          res.send({
+            name: `${req.body.subdomain}.${this.embark.config.namesystemConfig.register.rootDomain}`,
+            address: req.body.address
           });
         });
       }
