@@ -1,5 +1,5 @@
 import {__} from 'embark-i18n';
-import {AddressUtils, hashTo32ByteHexString, recursiveMerge} from 'embark-utils';
+import {recursiveMerge} from 'embark-utils';
 const namehash = require('eth-ens-namehash');
 const async = require('async');
 import {ens} from 'embark-core/constants.json';
@@ -14,7 +14,6 @@ const ensConfig = require('./ensContractConfigs');
 const secureSend = embarkJsUtils.secureSend;
 
 const reverseAddrSuffix = '.addr.reverse';
-const {ZERO_ADDRESS} = AddressUtils;
 const ENS_WHITELIST = ens.whitelist;
 const NOT_REGISTERED_ERROR = 'Name not yet registered';
 
@@ -72,18 +71,18 @@ class ENS {
     this.enabled = true;
     this.doSetENSProvider = this.config.namesystemConfig.provider === 'ens';
 
-    this.registerEvents();
+    this.registerActions();
     this.ensAPI.registerConsoleCommands();
-    this.events.request2("runcode:whitelist", 'eth-ens-namehash');
+    this.events.request("runcode:whitelist", 'eth-ens-namehash');
     this.initated = true;
     cb();
   }
 
-  registerEvents() {
-    if (this.eventsRegistered) {
+  registerActions() {
+    if (this.actionsRegistered) {
       return;
     }
-    this.eventsRegistered = true;
+    this.actionsRegistered = true;
     this.embark.registerActionForEvent("deployment:deployContracts:beforeAll", this.configureContractsAndRegister.bind(this));
     this.embark.registerActionForEvent('deployment:contract:beforeDeploy', this.modifyENSArguments.bind(this));
     this.embark.registerActionForEvent("deployment:deployContracts:afterAll", this.associateContractAddresses.bind(this));
@@ -145,75 +144,6 @@ class ENS {
     this.events.request("embarkjs:console:setProvider", 'names', 'ens', config);
   }
 
-  associateStorageToEns(options, cb) {
-    const self = this;
-    // Code inspired by https://github.com/monkybrain/ipfs-to-ens
-    const {name, storageHash} = options;
-
-    if (!this.isENSName(name)) {
-      return cb(__('Invalid domain name: {{name}}\nValid extensions are: {{extenstions}}', {name, extenstions: ENS_WHITELIST.join(', ')}));
-    }
-
-    let hashedName = namehash.hash(name);
-    let contentHash;
-    try {
-      contentHash = hashTo32ByteHexString(storageHash);
-    } catch (e) {
-      return cb(__('Invalid IPFS hash'));
-    }
-    // Set content
-    async.waterfall([
-      function getRegistryABI(next) {
-        self.events.request('contracts:contract', "ENSRegistry", (contract) => {
-          next(null, contract);
-        });
-      },
-      function createRegistryContract(contract, next) {
-        self.events.request("blockchain:contract:create",
-          {abi: contract.abiDefinition, address: contract.deployedAddress},
-          (resolver) => {
-            next(null, resolver);
-          });
-      },
-      function getResolverForName(registry, next) {
-        registry.methods.resolver(hashedName).call((err, resolverAddress) => {
-          if (err) {
-            return cb(err);
-          }
-          if (resolverAddress === ZERO_ADDRESS) {
-            return cb(NOT_REGISTERED_ERROR);
-          }
-          next(null, resolverAddress);
-        });
-      },
-      function getResolverABI(resolverAddress, next) {
-        self.events.request('contracts:contract', "Resolver", (contract) => {
-          next(null, resolverAddress, contract);
-        });
-      },
-      function createResolverContract(resolverAddress, contract, next) {
-        self.events.request("blockchain:contract:create",
-          {abi: contract.abiDefinition, address: resolverAddress},
-          (resolver) => {
-            next(null, resolver);
-          });
-      },
-      function getDefaultAccount(resolver, next) {
-        self.events.request("blockchain:defaultAccount:get", (_err, defaultAccount) => {
-          next(null, resolver, defaultAccount);
-        });
-      },
-      function setContent(resolver, defaultAccount, next) {
-        resolver.methods.setContent(hashedName, contentHash).send({from: defaultAccount}).then((transaction) => {
-          if (transaction.status !== "0x1" && transaction.status !== "0x01" && transaction.status !== true) {
-            return next('Association failed. Status: ' + transaction.status);
-          }
-          next();
-        }).catch(next);
-      }
-    ], cb);
-  }
-
   async registerConfigDomains(config, cb) {
     const defaultAccount = await this.web3DefaultAccount;
     async.each(Object.keys(this.config.namesystemConfig.register.subdomains), (subDomainName, eachCb) => {
@@ -230,7 +160,6 @@ class ENS {
 
   async associateContractAddresses(params, cb) {
     if (!this.config.namesystemConfig.enabled) {
-      // ENS was disabled
       return cb();
     }
 
